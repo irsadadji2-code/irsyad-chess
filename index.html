@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Irsyad Chess</title>
+
+<!-- Chess Engine -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/1.0.0/chess.min.js"></script>
+
+<!-- Firebase (hanya aktif saat online/hosting) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<style>
+body{
+    margin:0;
+    background:#0d1117;
+    color:#e6edf3;
+    font-family:Segoe UI, sans-serif;
+}
+nav{
+    background:#161b22;
+    padding:12px 30px;
+    display:flex;
+    justify-content:space-between;
+}
+#main{
+    display:flex;
+    justify-content:center;
+    gap:30px;
+    margin-top:30px;
+}
+#board{
+    display:grid;
+    grid-template-columns:repeat(8,70px);
+    grid-template-rows:repeat(8,70px);
+    border-radius:10px;
+    overflow:hidden;
+}
+.square{
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    font-size:42px;
+    cursor:pointer;
+}
+.light{background:#eeeed2}
+.dark{background:#769656}
+.square:hover{filter:brightness(1.1)}
+.selected{outline:4px solid gold}
+#panel{
+    width:260px;
+    background:#161b22;
+    padding:15px;
+    border-radius:10px;
+}
+input,button{
+    width:100%;
+    padding:8px;
+    margin-bottom:10px;
+    border-radius:6px;
+    border:1px solid #30363d;
+    background:#0d1117;
+    color:white;
+}
+button{
+    background:#238636;
+    cursor:pointer;
+}
+button:hover{background:#2ea043}
+.mode-btn{
+    background:#30363d;
+}
+.notice{
+    font-size:12px;
+    opacity:.8;
+}
+</style>
+</head>
+
+<body>
+
+<nav>
+    <strong>♟ Irsyad Chess</strong>
+    <span>Game Catur Pribadi</span>
+</nav>
+
+<div id="main">
+    <div id="board"></div>
+
+    <div id="panel">
+        <h3>Game Mode</h3>
+        <button class="mode-btn" onclick="setMode('ai')">🎮 VS Komputer</button>
+        <button class="mode-btn" onclick="setMode('online')">🌍 Online (Room ID)</button>
+
+        <div id="onlinePanel" style="display:none">
+            <input id="room" placeholder="Room ID (contoh: 111456)">
+            <button onclick="joinRoom()">Join Room</button>
+            <p id="status">Status: Offline</p>
+        </div>
+
+        <p id="turn">Giliran: -</p>
+        <p class="notice" id="env"></p>
+    </div>
+</div>
+
+<script>
+// ====== ENV DETECTION ======
+const isHosted = location.protocol === "https:";
+document.getElementById("env").textContent =
+    isHosted ? "Mode Online AKTIF" : "Mode Offline (VS Komputer)";
+
+// ====== FIREBASE (ONLY IF HOSTED) ======
+let db = null;
+if(isHosted){
+    firebase.initializeApp({
+        databaseURL:"https://online-chess-demo-default-rtdb.firebaseio.com/"
+    });
+    db = firebase.database();
+}
+
+// ====== ENGINE ======
+const game = new Chess();
+const boardEl = document.getElementById("board");
+const turnEl = document.getElementById("turn");
+const statusEl = document.getElementById("status");
+
+let board=[];
+let selected=null;
+let mode="ai";
+let roomId="";
+
+const pieces={
+    r:"♜",n:"♞",b:"♝",q:"♛",k:"♚",p:"♟",
+    R:"♖",N:"♘",B:"♗",Q:"♕",K:"♔",P:"♙"
+};
+
+function setMode(m){
+    mode=m;
+    game.reset();
+    selected=null;
+    sync();
+    document.getElementById("onlinePanel").style.display =
+        (m==="online" && isHosted)?"block":"none";
+
+    if(m==="online" && !isHosted){
+        alert("Mode Online hanya aktif saat website di-hosting (https).");
+        mode="ai";
+    }
+}
+
+function draw(){
+    boardEl.innerHTML="";
+    for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++){
+            const s=document.createElement("div");
+            s.className="square "+((r+c)%2==0?"light":"dark");
+            s.dataset.r=r;
+            s.dataset.c=c;
+            if(board[r][c])s.textContent=pieces[board[r][c]];
+            s.onclick=()=>clickSquare(s);
+            boardEl.appendChild(s);
+        }
+    }
+    turnEl.textContent="Giliran: "+(game.turn()==="w"?"Putih":"Hitam");
+}
+
+function clickSquare(s){
+    const r=s.dataset.r,c=s.dataset.c;
+    const files="abcdefgh";
+
+    if(selected){
+        const from=files[selected.c]+(8-selected.r);
+        const to=files[c]+(8-r);
+        const move=game.move({from,to});
+        selected=null;
+
+        if(move){
+            sync();
+            checkStatus();
+            if(mode==="ai") setTimeout(aiMove,400);
+            if(mode==="online") save();
+        }
+    }else{
+        selected={r,c};
+        s.classList.add("selected");
+    }
+}
+
+function aiMove(){
+    if(game.game_over()) return;
+    const moves=game.moves();
+    const move=moves[Math.floor(Math.random()*moves.length)];
+    game.move(move);
+    sync();
+    checkStatus();
+}
+
+function sync(){
+    board=Array(8).fill(null).map(()=>Array(8).fill(""));
+    game.board().forEach((row,r)=>{
+        row.forEach((p,c)=>{
+            if(p) board[r][c]=p.color==="w"?p.type.toUpperCase():p.type;
+        });
+    });
+    draw();
+}
+
+function checkStatus(){
+    if(game.in_checkmate()) alert("👑 CHECKMATE!");
+    else if(game.in_check()) alert("⚠️ CHECK!");
+}
+
+// ====== ONLINE ROOM ======
+function joinRoom(){
+    if(!db) return;
+    roomId=document.getElementById("room").value;
+    if(!roomId) return;
+
+    statusEl.textContent="Online Room: "+roomId;
+
+    db.ref("rooms/"+roomId).on("value",snap=>{
+        if(snap.exists()){
+            game.load(snap.val().fen);
+            sync();
+        }
+    });
+    save();
+}
+
+function save(){
+    if(db && roomId){
+        db.ref("rooms/"+roomId).set({fen:game.fen()});
+    }
+}
+
+// ====== AUTO START (FIX BLANK) ======
+setMode('ai');   // LANGSUNG MAIN VS KOMPUTER
+sync();          // PASTI MUNCUL PAPAN
+</script>
+
+</body>
+</html>
